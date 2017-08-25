@@ -1,0 +1,201 @@
+%初始化设置
+a = 0;
+rho = .5;
+gamma = .5;
+delta1 = .9;
+delta2 = .5;
+delta3 = .2;
+A = [0 0 rho a ; 0 0 rho^2 a*(1 + rho);0 0 rho^3 a*(1 + rho + rho^2);delta3 delta2 delta1 gamma];
+% Input of the parameters for the B matrix
+%     
+B = eye(4);
+%
+% m = the number of high frequency periods
+%
+m = 3;
+%
+BChol = chol(B);
+CC=B;
+%
+% m = the number of high frequency periods
+%
+% Design of the H matrix
+%
+H = [1 0 0 0; 0 0 0 1; 0 1 0 0;0 0 0 1;0 0 1 0; 0 0 0 1];
+%
+D = 0.*H;
+
+%主程序
+% Computing the impulse response of low frequency shocks onto
+% high frequency series
+%
+% Computing the impulse response of first high frequency shock
+%
+[IMPULSE_Mixeds] = dimpulse(A,BChol',H,D,1,25);
+%
+% Computing the impulse response of last high frequency shock
+%
+[IMPULSE_Mixede] = dimpulse(A,BChol',H,D,m,25);
+%
+% Computing the impulse response of low frequency shock
+%
+[IMPULSE_Mixedl] = dimpulse(A,BChol',H,D,m+1,25);
+%
+% Computing the traditional VAR implied spectral density
+%
+I1 = eye(size(A));
+i=sqrt(-1);
+ngx=max(size(A));
+ngy=max(size(H));
+ngy2=max(size(H))./m;
+%
+% T is the number of coordinates for the discrete Fourier transforms
+%
+T=2^7;
+%%
+% STY is the spectral density of the periodic mixed frequency VAR
+%
+STY=zeros(ngy*(T/2+1),ngy);
+STy2=zeros(ngy2*(T/2+1),ngy2);
+%
+% STLF is the spectral density of the traditional low frequency VAR
+%
+STLF=zeros(T/2+1,ngy2);
+%
+for j=0:T/2;
+ex=exp(2*pi*i*j/T);
+exinv=exp(-2*pi*i*j/T);
+Q=zeros(ngy2,ngy);
+Qinv = Q;
+for h=1:m
+nh=int2str(h);
+Q(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*ex^(h-1)*eye(ngy2);
+Qinv(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*exinv^(h-1)*eye(ngy2);
+end
+STY(j*ngy+1:(j+1)*ngy,:) = (H/(I1-A*ex^m))*CC*((H/(I1-A*ex^(-m))))';
+STy2(j*ngy2+1:(j+1)*ngy2,:)= Q*(STY(j*ngy+1:(j+1)*ngy,:))*Qinv';
+for k=1:ngy2;
+STLF(j+1,k)=STy2(j*ngy2+k,k);
+end
+end
+%
+% Now plot the spectral densities
+%
+%spec1 = real(STLF(1,1:T/2+1))');
+%f=[0:T/2].*2*pi/T;
+% plot(f',real(STLF(1,1:T/2+1))),title('spectr of series 1'),pause
+% plot(f',real(STLF(2,1:T/2+1))),title('spectr of series 2'),pause
+% size(STLF)
+% STLFifft = ifft(STLF);
+% size(STLFifft)
+%
+vecSTY = reshape(STY,1,ngy*(T/2+1)*ngy);
+otherparams = [ngy ngy2 T m vecSTY];
+% Need to generalize this here the -1 in the next line
+param0 = [.1 .1 .1 .1 1. 2. 3.];
+f = @(param0)klicobjspeczero(param0,otherparams);
+options.MaxFunEvals = 2000;
+[param_stV] = fminunc(f,param0,options);
+param0 = param_stV;
+f = @(param0)klicobjspec(param0,otherparams);
+[param_stV] = fminunc(f,param0,options);
+ngy22 = ngy2*ngy2;
+AstV = reshape(param_stV(1:ngy22),ngy2,ngy2);
+BstV = tril([param_stV(1,ngy22+1) param_stV(1,ngy22+2); ...
+param_stV(1,ngy22+2) param_stV(1,ngy22+3)])*triu([param_stV(1,ngy22+1) param_stV(1,ngy22+2); param_stV(1,ngy22+2) param_stV(1,ngy22+3)]) ;
+BstV = (chol(BstV))';
+CstV = eye(ngy2);
+DstV = zeros(ngy2,ngy2);
+%%
+% Computing the impulse response traditional VAR to aggregated HF series
+%
+[IMPULSE_MixedstVHF] = dimpulse(AstV,BstV,CstV,DstV,1,25);
+%
+% Computing the impulse response traditional VAR to aggregated LF series
+%
+[IMPULSE_MixedstVLF] = dimpulse(AstV,BstV,CstV,DstV,2,25);
+%
+%plot(IMPULSE_Mixeds(:,4),'+', IMPULSE_Mixede(:,4),'o',...,
+% IMPULSE_MixedstVHF(:,2),'d')
+hold on;
+%plot(IMPULSE_Mixeds(2:25,4),'+-')
+%plot(IMPULSE_Mixede(2:25,4),'+-')
+%plot(IMPULSE_MixedstVHF(2:25,2),'o:')
+%
+plot(IMPULSE_Mixedl(2:25,1), '+-')
+plot(IMPULSE_Mixedl(2:25,3), '+-')
+plot(IMPULSE_MixedstVLF(2:25,1),'o:')
+hold off
+
+%功能函数klicobjspeczero
+function fun = klicobjspeczero(param0,otherparams)
+% This function provides a first guess of the parameters by focusing on the
+% zero frequency before running the klicobjspec
+%
+ngy = otherparams(1,1);
+ngy2 = otherparams(1,2);
+T = otherparams(1,3);
+m = otherparams(1,4);
+STY = reshape(otherparams(1,5:end),ngy*(T/2+1),ngy);
+ngy22 = ngy2*ngy2;
+AstV = real(reshape(param0(1:ngy22),ngy2,ngy2));
+% Need to generalize this
+BstV = real(tril([param0(1,ngy22+1) param0(1,ngy22+2); ...
+param0(1,ngy22+2) param0(1,ngy22+3)])*...
+triu([param0(1,ngy22+1) param0(1,ngy22+2); ...
+param0(1,ngy22+2) param0(1,ngy22+3)])) ;
+E2 = 0.;
+E3 = 0.;
+fun = realmax;
+SstV = zeros(ngy2,ngy2);
+I1 = eye(ngy2);
+ex=1.;
+exinv=1.;
+Q=zeros(ngy2,ngy);
+Qinv = Q;
+for h=1:m
+nh=int2str(h);
+Q(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*ex^(h-1)*eye(ngy2);
+Qinv(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*exinv^(h-1)*eye(ngy2);
+end
+SstV = (I1/(I1-AstV*ex^m))*BstV*((I1/(I1-AstV*ex^(-m))))';
+E2 = E2 + log(det(SstV));
+E3 = E3 + trace((Q*(STY(1:ngy,:))*Qinv')/SstV);
+fun = real(E2 + E3);
+
+%功能函数2
+unction fun = klicobjspec(param0,otherparams)
+ngy = otherparams(1,1);
+ngy2 = otherparams(1,2);
+T = otherparams(1,3);
+m = otherparams(1,4);
+STY = reshape(otherparams(1,5:end),ngy*(T/2+1),ngy);
+ngy22 = ngy2*ngy2;
+AstV = real(reshape(param0(1:ngy22),ngy2,ngy2));
+BstV = real(tril([param0(1,ngy22+1) param0(1,ngy22+2); ...
+param0(1,ngy22+2) param0(1,ngy22+3)])*...
+triu([param0(1,ngy22+1) param0(1,ngy22+2); ...
+param0(1,ngy22+2) param0(1,ngy22+3)])) ;
+E2 = 0.;
+E3 = 0.;
+fun = realmax;
+SstV = zeros(T/2+1,ngy2);
+I1 = eye(ngy2);
+for j=0:T/2;
+ex=exp(2*pi*i*j/T);
+exinv=exp(-2*pi*i*j/T);
+Q=zeros(ngy2,ngy);
+Qinv = Q;
+for h=1:m
+nh=int2str(h);
+Q(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*ex^(h-1)*eye(ngy2);
+Qinv(:,(h-1)*ngy2+1:h*ngy2)=m^(-.5)*exinv^(h-1)*eye(ngy2);
+end
+SstV(j*ngy2+1:(j+1)*ngy2,:) = ...
+(I1/(I1-AstV*ex^m))*BstV*((I1/(I1-AstV*ex^(-m))))';
+E2 = E2 + log(det(SstV(j*ngy2+1:(j+1)*ngy2,:)));
+E3 = E3 + trace((Q*(STY(j*ngy+1:(j+1)*ngy,:))*Qinv')/...
+SstV(j*ngy2+1:(j+1)*ngy2,:));
+end;
+fun = real(E2 + E3);
+
